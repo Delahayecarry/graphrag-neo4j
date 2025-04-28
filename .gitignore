@@ -8,3 +8,21 @@ wheels/
 
 # Virtual environments
 .venv
+data/
+*.txt
+*.json
+*.csv
+*.jsonl
+*.jsonl.gz
+*.jsonl.gz.part
+*.jsonl.gz.part.1
+.env
+output/
+*.html
+*.png
+*.csv
+*.json
+*.jsonl
+*.jsonl.gz
+*.log
+scripts/
