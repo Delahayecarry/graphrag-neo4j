@@ -1,7 +1,11 @@
+
+#########################此处设置会将本地数据上传到neo4j数据库不建议开启#########################
+#不开启留空即可
 # neo4j配置
 NEO4J_URI=
 NEO4J_USERNAME=
 NEO4J_PASSWORD=
+#########################此处设置会将本地数据上传到neo4j数据库不建议开启#########################
 # openai配置
 OPENAI_API_KEY=
 OPENAI_BASE_URL=
@@ -11,3 +15,4 @@ EMBEDDING_MODEL=
 EMBEDDING_URL=
 EMBEDDING_API_KEY=
 # 其他配置
+GRAPHRAG_AVAILABLE=True #这里不需要修改，默认开启

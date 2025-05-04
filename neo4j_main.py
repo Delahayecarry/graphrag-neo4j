@@ -1,5 +1,5 @@
 """
-GraphRAG-Neo4j 主程序入口
+Neo4j模式的GraphRAG系统
 基于Neo4j的知识图谱增强检索生成系统
 """
 
@@ -8,6 +8,7 @@ import sys
 import asyncio
 import logging
 import time
+import click
 from tqdm import tqdm
 from dotenv import load_dotenv
 
@@ -16,7 +17,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("graphrag.log"),
+        logging.FileHandler("neo4j_graphrag.log"),
         logging.StreamHandler(sys.stdout)
     ]
 )
@@ -33,7 +34,6 @@ from graphragdiy.knowledge_graph.retriever import get_retriever_manager
 from graphragdiy.rag.graph_rag import get_graph_rag_system
 from graphragdiy.visualization.graph_visualizer import get_visualizer
 from config import settings
-
 
 async def process_files(file_paths, kg_builder):
     """处理多个文件，构建知识图谱"""
@@ -69,19 +69,45 @@ async def process_files(file_paths, kg_builder):
             results.append({"file": file_path, "success": False, "error": str(e)})
     
     success_count = sum(1 for r in results if r['success'])
-    
     print(f"\n✅ 文档处理完成 ({success_count}/{len(file_paths)} 成功)")
-    
     return results
 
-
-async def main():
-    try:
-        print("\n🚀 GraphRAG-Neo4j 启动中...")
-        start_time = time.time()
+async def interactive_qa(rag_system):
+    """交互式问答循环"""
+    print("\n💬 进入交互式问答模式 (输入'exit'退出)")
+    
+    while True:
+        query = input("\n🔍 请输入您的问题: ")
+        if query.lower() in ['exit', 'quit', '退出']:
+            break
+            
+        print("\n🔄 正在处理查询...")
         
-        # 加载环境变量
-        load_dotenv()
+        # 使用基础向量检索
+        vector_start = time.time()
+        vector_result = rag_system.search(query, use_graph=False)
+        vector_time = time.time() - vector_start
+        
+        # 使用图增强检索
+        graph_start = time.time()
+        graph_result = rag_system.search(query, use_graph=True)
+        graph_time = time.time() - graph_start
+        
+        print("\n📝 基础向量检索结果:")
+        print(f"⏱️  处理时间: {vector_time:.2f}秒")
+        print(f"{vector_result.answer}")
+        
+        print("\n📝 图增强检索结果:")
+        print(f"⏱️  处理时间: {graph_time:.2f}秒")
+        print(f"{graph_result.answer}")
+    
+    print("\n👋 感谢使用GraphRAG-Neo4j系统!")
+
+async def neo4j_mode(data_dir):
+    """Neo4j模式的主要处理流程"""
+    try:
+        print("\n🚀 启动Neo4j模式...")
+        start_time = time.time()
         
         # 初始化组件
         print("\n⚙️ 初始化系统组件...")
@@ -103,7 +129,6 @@ async def main():
         logger.info("知识图谱构建器初始化完成")
         
         # 设置要处理的文件
-        data_dir = settings.RAW_DATA_DIR
         file_paths = []
         
         # 列出data目录中的文本文件
@@ -114,9 +139,10 @@ async def main():
         if not file_paths:
             print(f"\n⚠️  警告: 在 {data_dir} 目录中没有找到文本文件")
             logger.warning(f"在 {data_dir} 目录中没有找到文本文件")
-        else:
-            # 处理文件并构建知识图谱
-            results = await process_files(file_paths, kg_builder)
+            return
+            
+        # 处理文件并构建知识图谱
+        results = await process_files(file_paths, kg_builder)
         
         # 创建索引
         print("\n🔍 创建向量和全文索引...")
@@ -163,36 +189,10 @@ async def main():
         print(f"\n✨ 系统初始化完成! (用时: {setup_time:.2f}秒)")
         
         # 交互式问答循环
-        print("\n💬 进入交互式问答模式 (输入'exit'退出)")
-        while True:
-            query = input("\n🔍 请输入您的问题: ")
-            if query.lower() in ['exit', 'quit', '退出']:
-                break
-                
-            print("\n🔄 正在处理查询...")
-            
-            # 使用基础向量检索
-            vector_start = time.time()
-            vector_result = rag_system.search(query, use_graph=False)
-            vector_time = time.time() - vector_start
-            
-            # 使用图增强检索
-            graph_start = time.time()
-            graph_result = rag_system.search(query, use_graph=True)
-            graph_time = time.time() - graph_start
-            
-            print("\n📝 基础向量检索结果:")
-            print(f"⏱️  处理时间: {vector_time:.2f}秒")
-            print(f"{vector_result.answer}")
-            
-            print("\n📝 图增强检索结果:")
-            print(f"⏱️  处理时间: {graph_time:.2f}秒")
-            print(f"{graph_result.answer}")
-            
-        print("\n👋 感谢使用GraphRAG-Neo4j系统!")
+        await interactive_qa(rag_system)
         
     except Exception as e:
-        logger.error(f"系统运行出错: {str(e)}")
+        logger.error(f"Neo4j模式运行出错: {str(e)}")
         print(f"\n❌ 错误: {str(e)}")
         raise
     finally:
@@ -201,6 +201,21 @@ async def main():
             db_connector.close()
             logger.info("数据库连接已关闭")
 
+@click.command()
+@click.option('--data-dir', default=settings.RAW_DATA_DIR,
+              help='输入数据目录路径，包含要处理的文本文件')
+def main(data_dir):
+    """Neo4j模式的GraphRAG系统"""
+    # 加载环境变量
+    load_dotenv()
+    
+    try:
+        asyncio.run(neo4j_mode(data_dir))
+    except KeyboardInterrupt:
+        print("\n\n👋 程序已终止")
+    except Exception as e:
+        print(f"\n❌ 程序运行出错: {str(e)}")
+        raise
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main() 

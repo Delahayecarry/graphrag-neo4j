@@ -11,6 +11,8 @@ from pyvis.network import Network
 from config import settings
 from graphragdiy.database.neo4j_connector import get_connector
 import colorsys
+import json
+import lancedb
 
 logger = logging.getLogger(__name__)
 
@@ -698,9 +700,134 @@ class GraphVisualizer:
 # 默认可视化器实例，用于全局共享
 default_visualizer = None
 
-def get_visualizer():
-    """获取默认可视化器实例"""
-    global default_visualizer
-    if default_visualizer is None:
-        default_visualizer = GraphVisualizer()
-    return default_visualizer 
+def get_visualizer(mode='neo4j', root_dir=None):
+    """
+    创建可视化器实例
+    
+    Args:
+        mode (str): 可视化模式，'neo4j' 或 'graphrag'
+        root_dir (str, optional): graphrag工作目录路径
+        
+    Returns:
+        GraphVisualizer: 可视化器实例
+    """
+    if mode == 'graphrag':
+        if not root_dir:
+            raise ValueError("graphrag模式需要指定root_dir参数")
+        return GraphragVisualizer(root_dir)
+    else:
+        return GraphVisualizer()
+
+class GraphragVisualizer(GraphVisualizer):
+    """graphrag向量数据库可视化类"""
+    
+    def __init__(self, root_dir, output_dir=None):
+        """
+        初始化graphrag可视化器
+        
+        Args:
+            root_dir (str): graphrag工作目录路径
+            output_dir (str, optional): 输出目录
+        """
+        super().__init__(output_dir=output_dir)
+        self.root_dir = root_dir
+        self.db_path = os.path.join(root_dir, "output/lancedb")
+        
+    def _fetch_graph_data(self, limit=1000, node_labels=None, rel_types=None):
+        """
+        从graphrag向量数据库获取图数据
+        
+        Args:
+            limit (int, optional): 限制节点数量
+            node_labels (list, optional): 节点标签过滤
+            rel_types (list, optional): 关系类型过滤
+            
+        Returns:
+            tuple: (nodes, relationships)
+        """
+        try:
+            # 读取graphrag.json配置文件
+            config_path = os.path.join(self.root_dir, "graphrag.json")
+            if not os.path.exists(config_path):
+                raise FileNotFoundError(f"graphrag配置文件不存在: {config_path}")
+                
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+            
+            # 连接LanceDB
+            db = lancedb.connect(self.db_path)
+            
+            # 获取节点表
+            nodes_table = db.open_table("nodes")
+            nodes_data = nodes_table.to_pandas()
+            
+            # 获取边表
+            edges_table = db.open_table("edges")
+            edges_data = edges_table.to_pandas()
+            
+            # 转换为Neo4j记录格式的数据结构
+            class NodeRecord:
+                def __init__(self, node_id, labels, **attrs):
+                    self.element_id = node_id
+                    self._labels = labels
+                    self._attrs = attrs
+                    
+                @property
+                def labels(self):
+                    return self._labels
+                    
+                def items(self):
+                    return self._attrs.items()
+            
+            class RelationshipRecord:
+                def __init__(self, rel_type, **attrs):
+                    self.type = rel_type
+                    self._attrs = attrs
+                    
+                def items(self):
+                    return self._attrs.items()
+            
+            class Record:
+                def __init__(self, **kwargs):
+                    self._data = kwargs
+                    
+                def __getitem__(self, key):
+                    return self._data.get(key)
+            
+            # 构建节点记录
+            nodes = []
+            for _, row in nodes_data.iterrows():
+                node_id = row.get('id', len(nodes))
+                labels = [row.get('type', 'Node')]
+                attrs = {k: v for k, v in row.items() if k not in ['id', 'type', 'vector']}
+                
+                node_record = NodeRecord(node_id, labels, **attrs)
+                nodes.append(Record(n=node_record))
+                
+                if len(nodes) >= limit:
+                    break
+            
+            # 构建关系记录
+            relationships = []
+            for _, row in edges_data.iterrows():
+                source_id = row.get('source_id')
+                target_id = row.get('target_id')
+                rel_type = row.get('type', 'RELATED_TO')
+                
+                # 检查节点是否在限制范围内
+                if source_id < len(nodes) and target_id < len(nodes):
+                    source_node = nodes[source_id]['n']
+                    target_node = nodes[target_id]['n']
+                    rel_record = RelationshipRecord(rel_type)
+                    
+                    relationships.append(Record(
+                        n=source_node,
+                        r=rel_record,
+                        m=target_node
+                    ))
+            
+            return nodes, relationships
+            
+        except Exception as e:
+            logger.error(f"获取graphrag图数据失败: {str(e)}")
+            return [], [] 
